@@ -1,0 +1,3 @@
+tds_id = "tds01"
+tds_address = "http://127.0.0.1:8000"
+ixl_address = "http://127.0.0.1:8001"
