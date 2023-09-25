@@ -6,6 +6,7 @@ use figment::{
     providers::{Format, Toml},
     Figment,
 };
+
 use miette::IntoDiagnostic;
 use rasta::{rasta_client::RastaClient, SciPacket};
 use sci_rs::{SCIMessageType, SCITelegram};
@@ -77,11 +78,16 @@ impl<T: tds_state::TdsState> AxleCounter<T> {
 impl AxleCounter<Initialising> {
     pub async fn from_config(config: Config) -> miette::Result<Self> {
         info!(config.tds_id, "Setting up Axle Counter");
-        let connection = RastaClient::connect(config.ixl_address)
+        let ixl_address = config.ixl_address;
+        let connection = RastaClient::connect(ixl_address.clone())
             .await
             .into_diagnostic()?;
         let (tx, _) = tokio::sync::broadcast::channel(10);
-        let tvps = config.tvps.iter().map(Tvps::new).collect();
+        let tvps = config
+            .tvps
+            .into_iter()
+            .map(|cfg| futures::executor::block_on(Tvps::new(cfg, &ixl_address)).unwrap())
+            .collect();
         Ok(Self {
             id: config.tds_id,
             connection,
@@ -118,22 +124,6 @@ impl AxleCounter<Initialising> {
             // There should be a checksum here, have to figure out which kind...
             &[],
         ))?;
-
-        let data: Vec<u8> = SCITelegram::version_response(
-            telegram.protocol_type,
-            &self.id,
-            &telegram.sender,
-            SCI_TDS_VERSION,
-            if telegram.payload[0] == SCI_TDS_VERSION {
-                sci_rs::SCIVersionCheckResult::VersionsAreEqual
-            } else {
-                sci_rs::SCIVersionCheckResult::VersionsAreNotEqual
-            },
-            // There should be a checksum here, have to figure out which kind...
-            &[],
-        )
-        .into();
-        dbg!(data);
 
         let telegram: SCITelegram = next_message(&mut incoming_messages).await?;
 
@@ -190,7 +180,15 @@ impl AxleCounter<Initialising> {
     }
 }
 
-impl AxleCounter<Operational> {}
+impl AxleCounter<Operational> {
+    pub async fn run(&mut self) -> miette::Result<()> {
+        for tvps in &mut self.tvps {
+            tvps.wait_for_passing_axle(self.outgoing_messages.clone())
+                .await?;
+        }
+        Ok(())
+    }
+}
 
 fn deserialize_timer_value<'de, D>(d: D) -> Result<Duration, D::Error>
 where
@@ -202,11 +200,16 @@ where
 }
 
 #[derive(Clone, Deserialize, Debug)]
+pub struct TvpsConfig {
+    name: String,
+    address: String,
+}
+
+#[derive(Clone, Deserialize, Debug)]
 struct Config {
     tds_id: String,
-    tds_address: String,
     ixl_address: String,
-    tvps: Vec<String>,
+    tvps: Vec<TvpsConfig>,
     #[serde(deserialize_with = "deserialize_timer_value")]
     con_t_inhibition_timer: Duration,
 }
@@ -225,6 +228,7 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?;
 
     let axle_counter = AxleCounter::from_config(config).await?;
-    let axle_counter = axle_counter.init().await?;
+    let mut axle_counter = axle_counter.init().await?;
+    axle_counter.run().await?;
     Ok(())
 }

@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use futures::stream::BoxStream;
 use miette::IntoDiagnostic;
 use rasta::{rasta_server::RastaServer, SciPacket};
-use sci_rs::{scitds::OccupancyStatus, SCIMessageType, SCITelegram, SCIVersionCheckResult};
-use tokio::sync::{broadcast::Sender, Mutex};
+use sci_rs::{scitds::OccupancyStatus, SCIMessageType, SCITelegram};
+
 use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request, Response, Status, Streaming};
 use tracing::info;
@@ -33,27 +31,7 @@ async fn next_message(messages: &mut Streaming<SciPacket>) -> miette::Result<SCI
         .into_diagnostic()
 }
 
-struct TdsServer {
-    outgoing_messages: Sender<SciPacket>,
-    incoming_messages: Arc<Mutex<Option<BoxStream<'static, SciPacket>>>>,
-}
-
-impl TdsServer {
-    pub fn new() -> Self {
-        let (tx, _) = tokio::sync::broadcast::channel(10);
-        Self {
-            outgoing_messages: tx,
-            incoming_messages: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    fn send(&self, message: SCITelegram) -> miette::Result<()> {
-        self.outgoing_messages
-            .send(message.into())
-            .into_diagnostic()?;
-        Ok(())
-    }
-}
+struct TdsServer;
 
 #[tonic::async_trait]
 impl rasta::rasta_server::Rasta for TdsServer {
@@ -88,7 +66,13 @@ impl rasta::rasta_server::Rasta for TdsServer {
                 }
             }
 
-            loop {}
+            loop {
+                let next_msg = next_message(&mut req).await.unwrap();
+                assert_eq!(next_msg.message_type, SCIMessageType::scitds_tvps_occupancy_status());
+                info!("{}", next_msg);
+                let occupancy = OccupancyStatus::try_from(next_msg.payload[0]).unwrap();
+                info!("{} : {:?}", next_msg.sender, occupancy);
+            }
         };
         Ok(Response::new(Box::pin(output) as Self::StreamStream))
     }
@@ -102,11 +86,10 @@ async fn main() -> miette::Result<()> {
 
     tracing::subscriber::set_global_default(subscriber).into_diagnostic()?;
 
-    let tds_server = TdsServer::new();
     let addr = "127.0.0.1:8001".parse().into_diagnostic()?;
 
     Server::builder()
-        .add_service(RastaServer::new(tds_server))
+        .add_service(RastaServer::new(TdsServer))
         .serve(addr)
         .await
         .into_diagnostic()?;
