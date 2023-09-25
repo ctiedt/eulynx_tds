@@ -1,3 +1,5 @@
 tds_id = "tds01"
 tds_address = "http://127.0.0.1:8000"
 ixl_address = "http://127.0.0.1:8001"
+tvps = ["fma1"]
+con_t_inhibition_timer = 1000

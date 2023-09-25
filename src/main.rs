@@ -1,4 +1,6 @@
-use std::marker::PhantomData;
+mod tvps;
+
+use std::{marker::PhantomData, time::Duration};
 
 use figment::{
     providers::{Format, Toml},
@@ -7,13 +9,16 @@ use figment::{
 use miette::IntoDiagnostic;
 use rasta::{rasta_client::RastaClient, SciPacket};
 use sci_rs::{SCIMessageType, SCITelegram};
+use serde::{Deserialize, Deserializer};
 use serde_derive::Deserialize;
 use tds_state::{Initialising, Operational};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tonic::Streaming;
 use tracing::info;
 
-const SCI_TDS_VERSION: u8 = 0x03;
+use crate::tvps::Tvps;
+
+const SCI_TDS_VERSION: u8 = 0x01;
 
 mod rasta {
     tonic::include_proto!("sci");
@@ -52,11 +57,11 @@ async fn next_message(messages: &mut Streaming<SciPacket>) -> miette::Result<SCI
         .try_into()
         .into_diagnostic()
 }
-
 struct AxleCounter<State: tds_state::TdsState> {
     id: String,
     connection: RastaClient<tonic::transport::Channel>,
     outgoing_messages: tokio::sync::broadcast::Sender<SciPacket>,
+    tvps: Vec<tvps::Tvps>,
     _state: PhantomData<State>,
 }
 
@@ -76,10 +81,12 @@ impl AxleCounter<Initialising> {
             .await
             .into_diagnostic()?;
         let (tx, _) = tokio::sync::broadcast::channel(10);
+        let tvps = config.tvps.iter().map(Tvps::new).collect();
         Ok(Self {
             id: config.tds_id,
             connection,
             outgoing_messages: tx,
+            tvps,
             _state: PhantomData,
         })
     }
@@ -112,6 +119,22 @@ impl AxleCounter<Initialising> {
             &[],
         ))?;
 
+        let data: Vec<u8> = SCITelegram::version_response(
+            telegram.protocol_type,
+            &self.id,
+            &telegram.sender,
+            SCI_TDS_VERSION,
+            if telegram.payload[0] == SCI_TDS_VERSION {
+                sci_rs::SCIVersionCheckResult::VersionsAreEqual
+            } else {
+                sci_rs::SCIVersionCheckResult::VersionsAreNotEqual
+            },
+            // There should be a checksum here, have to figure out which kind...
+            &[],
+        )
+        .into();
+        dbg!(data);
+
         let telegram: SCITelegram = next_message(&mut incoming_messages).await?;
 
         assert_eq!(
@@ -127,16 +150,18 @@ impl AxleCounter<Initialising> {
 
         // Status Report
 
-        self.send(SCITelegram::tvps_occupancy_status(
-            &self.id,
-            &telegram.sender,
-            sci_rs::scitds::OccupancyStatus::Disturbed,
-            true,
-            0,
-            sci_rs::scitds::POMStatus::Ok,
-            sci_rs::scitds::DisturbanceStatus::Operational,
-            sci_rs::scitds::ChangeTrigger::InitialSectionState,
-        ))?;
+        for tvps in &self.tvps {
+            self.send(SCITelegram::tvps_occupancy_status(
+                tvps.id(),
+                &telegram.sender,
+                sci_rs::scitds::OccupancyStatus::Disturbed,
+                true,
+                0,
+                sci_rs::scitds::POMStatus::Ok,
+                sci_rs::scitds::DisturbanceStatus::Operational,
+                sci_rs::scitds::ChangeTrigger::InitialSectionState,
+            ))?;
+        }
 
         self.send(SCITelegram::tdp_status(
             &self.id,
@@ -153,34 +178,51 @@ impl AxleCounter<Initialising> {
             &telegram.sender,
         ))?;
 
+        info!("Initialisation complete");
+
         Ok(AxleCounter {
             id: self.id,
             connection: self.connection,
             outgoing_messages: self.outgoing_messages,
+            tvps: self.tvps,
             _state: PhantomData,
         })
     }
 }
 
-#[derive(Clone, Deserialize)]
+impl AxleCounter<Operational> {}
+
+fn deserialize_timer_value<'de, D>(d: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let timer = u64::deserialize(d)?;
+
+    Ok(Duration::from_millis(timer))
+}
+
+#[derive(Clone, Deserialize, Debug)]
 struct Config {
     tds_id: String,
     tds_address: String,
     ixl_address: String,
+    tvps: Vec<String>,
+    #[serde(deserialize_with = "deserialize_timer_value")]
+    con_t_inhibition_timer: Duration,
 }
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
-    let config = Figment::new()
-        .merge(Toml::file("tds.toml"))
-        .extract()
-        .into_diagnostic()?;
-
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .pretty()
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).into_diagnostic()?;
+
+    let config: Config = Figment::new()
+        .merge(Toml::file("tds.toml"))
+        .extract()
+        .into_diagnostic()?;
 
     let axle_counter = AxleCounter::from_config(config).await?;
     let axle_counter = axle_counter.init().await?;
