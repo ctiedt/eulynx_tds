@@ -92,7 +92,7 @@ async fn main() -> miette::Result<()> {
 
     let (outgoing_messages, outgoing_receiver) = tokio::sync::broadcast::channel(100);
 
-    let incoming_messages = client
+    let mut incoming_messages = client
         .stream(BroadcastStream::new(outgoing_receiver).map(|it| it.unwrap()))
         .await
         .into_diagnostic()?
@@ -102,7 +102,7 @@ async fn main() -> miette::Result<()> {
         .send(SciPacket {
             message: SCITelegram::version_check(
                 sci_rs::ProtocolType::SCIProtocolTDS,
-                "ixl",
+                "DE_IXL01",
                 "tds01",
                 0x01,
             )
@@ -112,6 +112,34 @@ async fn main() -> miette::Result<()> {
 
     let resp = next_message(&mut incoming_messages).await?;
     assert_eq!(resp.message_type, SCIMessageType::pdi_version_response());
+
+    outgoing_messages
+        .send(SciPacket {
+            message: SCITelegram::initialisation_request(
+                sci_rs::ProtocolType::SCIProtocolTDS,
+                "DE_IXL01",
+                "tds01",
+            )
+            .into(),
+        })
+        .into_diagnostic()?;
+
+    let resp = next_message(&mut incoming_messages).await?;
+    assert_eq!(
+        resp.message_type,
+        SCIMessageType::pdi_initialisation_response()
+    );
+
+    let resp = next_message(&mut incoming_messages).await?;
+    assert_eq!(
+        resp.message_type,
+        SCIMessageType::pdi_initialisation_completed()
+    );
+
+    loop {
+        let resp = next_message(&mut incoming_messages).await?;
+        println!("{resp}");
+    }
 
     Ok(())
 }
