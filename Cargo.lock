@@ -968,6 +968,7 @@ checksum = "7ffc183a10b4478d04cbbbfc96d0873219d962dd5accaff2ffbd4ceb7df837f4"
 [[package]]
 name = "sci-rs"
 version = "0.1.0"
+source = "git+https://github.com/ctiedt/rasta-rs?branch=sci_tds#5ee60eb7fa1ba476c1aab68c093b8baa92acb7f7"
 
 [[package]]
 name = "scopeguard"

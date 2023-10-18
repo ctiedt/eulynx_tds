@@ -98,6 +98,8 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?
         .into_inner();
 
+    info!("Connecting to OC");
+
     outgoing_messages
         .send(SciPacket {
             message: SCITelegram::version_check(
@@ -112,6 +114,8 @@ async fn main() -> miette::Result<()> {
 
     let resp = next_message(&mut incoming_messages).await?;
     assert_eq!(resp.message_type, SCIMessageType::pdi_version_response());
+
+    info!("Received SCI version");
 
     outgoing_messages
         .send(SciPacket {
@@ -135,6 +139,8 @@ async fn main() -> miette::Result<()> {
         resp.message_type,
         SCIMessageType::pdi_initialisation_completed()
     );
+
+    info!("Initialisation complete");
 
     loop {
         let resp = next_message(&mut incoming_messages).await?;
