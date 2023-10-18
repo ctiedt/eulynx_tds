@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "dummy_ixl"
 path = "src/dummy_ixl.rs"
 
+[[bin]]
+name = "thales_ixl"
+path = "src/thales_ixl.rs"
+
 [dependencies]
 async-stream = "0.3.5"
 figment = { version = "0.10.10", features = ["toml"] }

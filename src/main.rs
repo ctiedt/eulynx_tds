@@ -1,3 +1,4 @@
+pub mod neupro_connection;
 mod tvps;
 
 use std::{marker::PhantomData, time::Duration};
