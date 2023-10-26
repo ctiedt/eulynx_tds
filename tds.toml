@@ -1,4 +1,5 @@
-tds_id = "tds01"
+tds_id = "DE_AC01"
+ixl_id = "DE_IXL01"
 ixl_address = "http://127.0.0.1:8001"
 con_t_inhibition_timer = 1000
 

@@ -1,4 +1,3 @@
-pub mod neupro_connection;
 mod tvps;
 
 use std::{marker::PhantomData, time::Duration};
@@ -12,7 +11,6 @@ use miette::IntoDiagnostic;
 use rasta::{rasta_client::RastaClient, SciPacket};
 use sci_rs::{SCIMessageType, SCITelegram};
 use serde::{Deserialize, Deserializer};
-use serde_derive::Deserialize;
 use tds_state::{Initialising, Operational};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tonic::Streaming;
