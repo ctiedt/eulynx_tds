@@ -4,7 +4,7 @@ use futures::{stream::BoxStream, FutureExt};
 use sci_rs::{scitds::OccupancyStatus, SCIMessageType, SCITelegram};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::info;
+use tracing::{event, info, Level};
 
 use crate::{next_message, rasta::SciPacket, SubsystemConfig};
 
@@ -46,56 +46,60 @@ impl crate::rasta::rasta_server::Rasta for Subsystem {
     ) -> Result<Response<Self::StreamStream>, Status> {
         info!("Incoming transmission");
         let mut req = request.into_inner();
-        let mut tvps = HashSet::new();
+        //let mut tvps = HashSet::new();
 
-        let own_id = self.own_id.clone();
-        let tds_id = self.tds_id.clone();
+        //let own_id = self.own_id.clone();
+        //let tds_id = self.tds_id.clone();
         let incoming_messages = self.incoming_messages.clone();
         let mut outgoing_messages = self.outgoing_messages.resubscribe();
         let output = async_stream::try_stream! {
-            yield SciPacket {message: SCITelegram::version_check(sci_rs::ProtocolType::SCIProtocolTDS, &own_id, &tds_id, 0x01).into()};
+            // This is the code for initialising the subsystem... Currently IXL commands are just passed through, but this might become necessary again later.
 
-            let version_response =  next_message(&mut req).await.unwrap();
-            assert_eq!(version_response.message_type, SCIMessageType::pdi_version_response());
+                    //yield SciPacket {message: SCITelegram::version_check(sci_rs::ProtocolType::SCIProtocolTDS, &own_id, &tds_id, 0x01).into()};
+        //
+                    //let version_response =  next_message(&mut req).await.unwrap();
+                    //assert_eq!(version_response.message_type, SCIMessageType::pdi_version_response());
+        //
+                    //yield SciPacket {message: SCITelegram::initialisation_request(sci_rs::ProtocolType::SCIProtocolTDS, &own_id, &tds_id).into()};
+        //
+                    //let init_response =  next_message(&mut req).await.unwrap();
+                    //assert_eq!(init_response.message_type, SCIMessageType::pdi_initialisation_response());
+        //
+                    //loop {
+                    //    let next_msg = next_message(&mut req).await.unwrap();
+                    //    if next_msg.message_type == SCIMessageType::scitds_tvps_occupancy_status() {
+                    //        let occupancy = OccupancyStatus::try_from(next_msg.payload[0]).unwrap();
+                    //        info!("{} : {:?}", next_msg.sender, occupancy);
+                    //        tvps.insert(next_msg.sender.trim_end_matches('_').to_string());
+                    //    } else if next_msg.message_type == SCIMessageType::pdi_initialisation_completed() {
+                    //        info!("TDS reports initialisation complete");
+                    //        break;
+                    //    }
+                    //}
+        //
+                    //info!("The following TVPS were reported: {tvps:?}");
 
-            yield SciPacket {message: SCITelegram::initialisation_request(sci_rs::ProtocolType::SCIProtocolTDS, &own_id, &tds_id).into()};
+                    // for tvps_ in tvps {
+                    //     yield SciPacket { message: SCITelegram::fc(&own_id, &tvps_, sci_rs::scitds::FCMode::U).into() };
+                    // }
 
-            let init_response =  next_message(&mut req).await.unwrap();
-            assert_eq!(init_response.message_type, SCIMessageType::pdi_initialisation_response());
-
-            loop {
-                let next_msg = next_message(&mut req).await.unwrap();
-                if next_msg.message_type == SCIMessageType::scitds_tvps_occupancy_status() {
-                    let occupancy = OccupancyStatus::try_from(next_msg.payload[0]).unwrap();
-                    info!("{} : {:?}", next_msg.sender, occupancy);
-                    tvps.insert(next_msg.sender.trim_end_matches('_').to_string());
-                } else if next_msg.message_type == SCIMessageType::pdi_initialisation_completed() {
-                    info!("TDS reports initialisation complete");
-                    break;
-                }
-            }
-
-            info!("The following TVPS were reported: {tvps:?}");
-
-            for tvps_ in tvps {
-                yield SciPacket { message: SCITelegram::fc(&own_id, &tvps_, sci_rs::scitds::FCMode::U).into() };
-            }
-
-            loop {
-                futures::select! {
-                    inc = next_message(&mut req).fuse() => {
-                        let inc = inc.unwrap();
-                        info!("{}", &inc);
-                        if let Some(err) = incoming_messages.send(inc).err() {
-                            panic!("{err}");
+                    loop {
+                        futures::select! {
+                            inc = next_message(&mut req).fuse() => {
+                                let inc = inc.unwrap();
+                                event!(Level::INFO, "{}", &inc);
+                                if let Some(err) = incoming_messages.send(inc).err() {
+                                    panic!("{err}");
+                                }
+                            }
+                            out = outgoing_messages.recv().fuse() => {
+                                let out = out.unwrap();
+                                event!(Level::INFO, "{}", &out);
+                                yield SciPacket { message: out.into() }
+                            }
                         }
                     }
-                    out = outgoing_messages.recv().fuse() => {
-                        yield SciPacket { message: out.unwrap().into() }
-                    }
-                }
-            }
-        };
+                };
         Ok(Response::new(Box::pin(output) as Self::StreamStream))
     }
 }

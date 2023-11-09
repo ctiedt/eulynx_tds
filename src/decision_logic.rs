@@ -8,7 +8,7 @@ use tonic::transport::Server;
 
 use crate::{rasta::rasta_server::RastaServer, subsystem::Subsystem, SubsystemConfig};
 use std::{sync::Arc, time::Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 pub trait DecisionStrategy {}
 
@@ -42,7 +42,7 @@ impl DecisionLogic {
             trustworthy,
             unreliable,
             timeout,
-            active: Arc::new(RwLock::new(ActiveSubsystem::Trustworthy)),
+            active: Arc::new(RwLock::new(ActiveSubsystem::Unreliable)),
             outgoing_messages: tx,
             trustworthy_incoming,
             unreliable_incoming,
@@ -85,6 +85,11 @@ impl DecisionLogic {
                     // This means both timed out, i.e. no new message
                     if t.is_err() && u.is_err() {
                         continue;
+                    }
+
+                    if t.is_ok() && u.is_err() {
+                        *active.write().await = ActiveSubsystem::Trustworthy;
+                        warn!("Switching to trustworthy subsystem");
                     }
 
                     match *active.read().await {
