@@ -81,18 +81,14 @@ impl crate::rasta::rasta_server::Rasta for Subsystem {
                 yield SciPacket { message: SCITelegram::fc(&own_id, &tvps_, sci_rs::scitds::FCMode::U).into() };
             }
 
-            //loop {
-            //    let next_msg = next_message(&mut req).await.unwrap();
-            //    assert_eq!(next_msg.message_type, SCIMessageType::scitds_tvps_occupancy_status());
-            //    info!("{}", next_msg);
-            //    let occupancy = OccupancyStatus::try_from(next_msg.payload[0]).unwrap();
-            //    info!("{} : {:?}", next_msg.sender, occupancy);
-            //}
-
             loop {
                 futures::select! {
                     inc = next_message(&mut req).fuse() => {
-                        let _ = incoming_messages.send(inc.unwrap());
+                        let inc = inc.unwrap();
+                        info!("{}", &inc);
+                        if let Some(err) = incoming_messages.send(inc).err() {
+                            panic!("{err}");
+                        }
                     }
                     out = outgoing_messages.recv().fuse() => {
                         yield SciPacket { message: out.unwrap().into() }

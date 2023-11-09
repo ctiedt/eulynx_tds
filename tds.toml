@@ -1,14 +1,14 @@
 tds_id = "DE_AC01"
 ixl_id = "DE_IXL01"
 ixl_address = "http://127.0.0.1:8001"
-con_t_inhibition_timer = 1000
+timeout = 1000
 
 [trustworthy]
 tds_id = "DE_AC01"
 ixl_id = "DE_IXL01"
-ixl_address = "127.0.0.1:8001"
+ixl_address = "0.0.0.0:8001"
 
 [unreliable]
 tds_id = "DE_AC01"
 ixl_id = "DE_IXL01"
-ixl_address = "127.0.0.1:8002"
+ixl_address = "0.0.0.0:8002"
