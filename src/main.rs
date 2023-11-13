@@ -145,7 +145,8 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?;
     info!("{:?}", &config);
 
-    let axle_counter = AxleCounter::from_config(config, AlwaysTrustworthy);
+    //let axle_counter = AxleCounter::from_config(config, AlwaysTrustworthy);
+    let axle_counter = AxleCounter::from_config(config, AlwaysUnreliable);
     axle_counter.run().await?;
 
     Ok(())
