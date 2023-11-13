@@ -7,7 +7,9 @@ use tokio::sync::{
 use tonic::transport::Server;
 
 use crate::{
-    decision_strategy::DecisionStrategy, rasta::rasta_server::RastaServer, subsystem::Subsystem,
+    decision_strategy::DecisionStrategy,
+    rasta::rasta_server::RastaServer,
+    subsystem::{ProtocolType, Subsystem},
     SubsystemConfig,
 };
 use std::{sync::Arc, time::Duration};
@@ -38,8 +40,8 @@ impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
         strategy: S,
     ) -> Self {
         let (tx, rx) = tokio::sync::broadcast::channel(100);
-        let trustworthy = Subsystem::new(trustworthy_config, rx);
-        let unreliable = Subsystem::new(unreliable_config, tx.subscribe());
+        let trustworthy = Subsystem::new(trustworthy_config, rx, ProtocolType::NeuPro);
+        let unreliable = Subsystem::new(unreliable_config, tx.subscribe(), ProtocolType::EULYNX);
         let trustworthy_incoming = trustworthy.incoming_messages();
         let unreliable_incoming = unreliable.incoming_messages();
         Self {
@@ -90,17 +92,24 @@ impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
 
                     let t = t.ok().map(Result::unwrap);
                     let u = u.ok().map(Result::unwrap);
+
+                    if t.is_none() && u.is_none() {
+                        continue;
+                    }
+
                     if let Some(switch) = strategy.switch_to(&t, &u) {
                         warn!("Switching to `{switch:?}` subsystem");
                         *active.write().await = switch;
                     }
+
+                    //info!("{} {}", if let Some(t) = &t {t.to_string()} else {"None".to_string()}, if let Some(t) = &u {t.to_string()} else {"None".to_string()});
 
                     match *active.read().await {
                         ActiveSubsystem::Trustworthy => {
                             match t {
                                 Some(t) => yield t,
                                 None => {
-                                    panic!("The trustworthy controller timed out");
+                                    panic!("The trustworthy controller timed out (trustworthy was active)");
                                 }
                             }
                         }
@@ -111,7 +120,7 @@ impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
                                     match t {
                                         Some(t) => yield t,
                                         None => {
-                                            panic!("The trustworthy controller timed out");
+                                            panic!("The trustworthy controller timed out (unreliable was active)");
                                         }
                                     }
                                 }

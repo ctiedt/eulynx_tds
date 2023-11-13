@@ -4,6 +4,7 @@ mod subsystem;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::decision_strategy::{AlwaysTrustworthy, AlwaysUnreliable};
 use decision_logic::{ActiveSubsystem, DecisionLogic};
 use decision_strategy::DecisionStrategy;
 use figment::{
@@ -18,7 +19,6 @@ use serde::{Deserialize, Deserializer};
 use tokio::sync::{broadcast::Sender, RwLock};
 use tonic::{Request, Streaming};
 use tracing::info;
-use crate::decision_strategy::AlwaysUnreliable;
 
 mod rasta {
     tonic::include_proto!("sci");
@@ -145,7 +145,7 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?;
     info!("{:?}", &config);
 
-    let axle_counter = AxleCounter::from_config(config, AlwaysUnreliable);
+    let axle_counter = AxleCounter::from_config(config, AlwaysTrustworthy);
     axle_counter.run().await?;
 
     Ok(())

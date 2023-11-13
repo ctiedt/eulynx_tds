@@ -2,7 +2,7 @@ tds_id = "DE_AC01"
 ixl_id = "DE_IXL01"
 rasta_id = "256"
 ixl_address = "http://127.0.0.1:5100"
-timeout = 2000
+timeout = 5000
 
 [trustworthy]
 tds_id = "DE_AC01"

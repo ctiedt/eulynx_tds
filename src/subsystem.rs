@@ -1,12 +1,30 @@
 use std::{collections::HashSet, net::SocketAddr};
 
 use futures::{stream::BoxStream, FutureExt};
-use sci_rs::{scitds::OccupancyStatus, SCIMessageType, SCITelegram};
+use sci_rs::{
+    scitds::{NeuProOccupancyStatusPayload, OccupancyStatusPayload},
+    SCIMessageType, SCITelegram,
+};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{event, info, Level};
 
 use crate::{next_message, rasta::SciPacket, SubsystemConfig};
+
+#[derive(Clone, Copy, Debug)]
+pub enum ProtocolType {
+    EULYNX,
+    NeuPro,
+}
+
+fn neupro_to_eulynx(mut message: SCITelegram) -> SCITelegram {
+    if message.message_type == SCIMessageType::scitds_tvps_occupancy_status() {
+        let payload = NeuProOccupancyStatusPayload::try_from(message.payload).unwrap();
+        let new_payload = OccupancyStatusPayload::from(payload);
+        message.payload = new_payload.into();
+    }
+    message
+}
 
 pub struct Subsystem {
     addr: SocketAddr,
@@ -14,16 +32,22 @@ pub struct Subsystem {
     tds_id: String,
     outgoing_messages: Receiver<SCITelegram>,
     incoming_messages: Sender<SCITelegram>,
+    protocol_type: ProtocolType,
 }
 
 impl Subsystem {
-    pub fn new(config: SubsystemConfig, outgoing_messages: Receiver<SCITelegram>) -> Self {
+    pub fn new(
+        config: SubsystemConfig,
+        outgoing_messages: Receiver<SCITelegram>,
+        protocol_type: ProtocolType,
+    ) -> Self {
         Self {
             addr: config.ixl_address,
             own_id: config.ixl_id,
             tds_id: config.tds_id,
             outgoing_messages,
             incoming_messages: Sender::new(10),
+            protocol_type,
         }
     }
 
@@ -52,6 +76,7 @@ impl crate::rasta::rasta_server::Rasta for Subsystem {
         //let tds_id = self.tds_id.clone();
         let incoming_messages = self.incoming_messages.clone();
         let mut outgoing_messages = self.outgoing_messages.resubscribe();
+        let protocol_type = self.protocol_type;
         let output = async_stream::try_stream! {
             // This is the code for initialising the subsystem... Currently IXL commands are just passed through, but this might become necessary again later.
 
@@ -86,15 +111,19 @@ impl crate::rasta::rasta_server::Rasta for Subsystem {
                     loop {
                         futures::select! {
                             inc = next_message(&mut req).fuse() => {
-                                let inc = inc.unwrap();
-                                event!(Level::INFO, "{}", &inc);
+                                let mut inc = inc.unwrap();
+                                match protocol_type {
+                                    ProtocolType::EULYNX => {},
+                                    ProtocolType::NeuPro => {inc = neupro_to_eulynx(inc);},
+                                }
+                                event!(Level::INFO, "{:?} {} ({})", protocol_type, &inc, inc.payload.len());
                                 if let Some(err) = incoming_messages.send(inc).err() {
                                     panic!("{err}");
                                 }
                             }
                             out = outgoing_messages.recv().fuse() => {
                                 let out = out.unwrap();
-                                event!(Level::INFO, "{}", &out);
+                                event!(Level::INFO, "{:?} {}", protocol_type, &out);
                                 yield SciPacket { message: out.into() }
                             }
                         }

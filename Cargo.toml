@@ -20,7 +20,7 @@ futures = "0.3.28"
 miette = { version = "5.10.0", features = ["fancy"] }
 prost = "0.12.0"
 sci-rs = { git = "https://github.com/ctiedt/rasta-rs", default_features = false, features = [
-    "scitds",
+    "scitds", "neupro"
 ] }
 #sci-rs = { path = "../rasta-rs/sci-rs", default-features = false, features = ["scitds"]}
 serde = { version = "1.0.188", features = ["derive"] }

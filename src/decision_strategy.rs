@@ -24,3 +24,17 @@ impl DecisionStrategy for AlwaysUnreliable {
         None
     }
 }
+
+pub struct AlwaysTrustworthy;
+
+impl DecisionStrategy for AlwaysTrustworthy {
+    const INITIAL_SUBSYSTEM: ActiveSubsystem = ActiveSubsystem::Trustworthy;
+
+    fn switch_to(
+        &self,
+        _msg_unreliable: &Option<SCITelegram>,
+        _msg_trustworthy: &Option<SCITelegram>,
+    ) -> Option<ActiveSubsystem> {
+        None
+    }
+}
