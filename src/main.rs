@@ -1,9 +1,11 @@
 mod decision_logic;
+mod decision_strategy;
 mod subsystem;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use decision_logic::{ActiveSubsystem, DecisionLogic};
+use decision_strategy::DecisionStrategy;
 use figment::{
     providers::{Format, Toml},
     Figment,
@@ -16,6 +18,7 @@ use serde::{Deserialize, Deserializer};
 use tokio::sync::{broadcast::Sender, RwLock};
 use tonic::{Request, Streaming};
 use tracing::info;
+use crate::decision_strategy::AlwaysUnreliable;
 
 mod rasta {
     tonic::include_proto!("sci");
@@ -41,20 +44,24 @@ pub async fn next_message(messages: &mut Streaming<SciPacket>) -> miette::Result
         .into_diagnostic()
 }
 
-pub struct AxleCounter {
+pub struct AxleCounter<S: DecisionStrategy + 'static> {
     tds_id: String,
     ixl_id: String,
     rasta_id: String,
     ixl_address: String,
-    decision_logic: DecisionLogic,
+    decision_logic: DecisionLogic<S>,
     sender: Sender<SCITelegram>,
     active: Arc<RwLock<ActiveSubsystem>>,
 }
 
-impl AxleCounter {
-    pub fn from_config(config: Config) -> Self {
-        let decision_logic =
-            DecisionLogic::new(config.trustworthy, config.unreliable, config.timeout);
+impl<S: DecisionStrategy> AxleCounter<S> {
+    pub fn from_config(config: Config, strategy: S) -> AxleCounter<S> {
+        let decision_logic = DecisionLogic::new(
+            config.trustworthy,
+            config.unreliable,
+            config.timeout,
+            strategy,
+        );
         let sender = decision_logic.get_sender();
         let active = decision_logic.active();
         Self {
@@ -103,6 +110,7 @@ pub struct Config {
     rasta_id: String,
     #[serde(deserialize_with = "deserialize_timer_value")]
     timeout: Duration,
+
     trustworthy: SubsystemConfig,
     unreliable: SubsystemConfig,
 }
@@ -137,7 +145,7 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?;
     info!("{:?}", &config);
 
-    let axle_counter = AxleCounter::from_config(config);
+    let axle_counter = AxleCounter::from_config(config, AlwaysUnreliable);
     axle_counter.run().await?;
 
     Ok(())

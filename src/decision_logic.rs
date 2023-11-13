@@ -6,32 +6,36 @@ use tokio::sync::{
 };
 use tonic::transport::Server;
 
-use crate::{rasta::rasta_server::RastaServer, subsystem::Subsystem, SubsystemConfig};
+use crate::{
+    decision_strategy::DecisionStrategy, rasta::rasta_server::RastaServer, subsystem::Subsystem,
+    SubsystemConfig,
+};
 use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
-pub trait DecisionStrategy {}
-
+#[derive(Copy, Clone, Debug)]
 pub enum ActiveSubsystem {
     Trustworthy,
     Unreliable,
 }
 
-pub struct DecisionLogic {
+pub struct DecisionLogic<S: DecisionStrategy + Send> {
     trustworthy: Subsystem,
     unreliable: Subsystem,
     timeout: Duration,
+    strategy: S,
     active: Arc<RwLock<ActiveSubsystem>>,
     outgoing_messages: Sender<SCITelegram>,
     trustworthy_incoming: Receiver<SCITelegram>,
     unreliable_incoming: Receiver<SCITelegram>,
 }
 
-impl DecisionLogic {
+impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
     pub fn new(
         trustworthy_config: SubsystemConfig,
         unreliable_config: SubsystemConfig,
         timeout: Duration,
+        strategy: S,
     ) -> Self {
         let (tx, rx) = tokio::sync::broadcast::channel(100);
         let trustworthy = Subsystem::new(trustworthy_config, rx);
@@ -42,7 +46,8 @@ impl DecisionLogic {
             trustworthy,
             unreliable,
             timeout,
-            active: Arc::new(RwLock::new(ActiveSubsystem::Unreliable)),
+            strategy,
+            active: Arc::new(RwLock::new(S::INITIAL_SUBSYSTEM)),
             outgoing_messages: tx,
             trustworthy_incoming,
             unreliable_incoming,
@@ -78,36 +83,34 @@ impl DecisionLogic {
         let mut unreliable_incoming = self.unreliable_incoming.resubscribe();
         let active = self.active.clone();
         let timeout = self.timeout;
+        let strategy = self.strategy;
         let stream = async_stream::stream! {
                 loop {
                     let (t, u) = futures::join!(tokio::time::timeout(timeout, trustworthy_incoming.recv()), tokio::time::timeout(timeout, unreliable_incoming.recv()));
 
-                    // This means both timed out, i.e. no new message
-                    if t.is_err() && u.is_err() {
-                        continue;
-                    }
-
-                    if t.is_ok() && u.is_err() {
-                        *active.write().await = ActiveSubsystem::Trustworthy;
-                        warn!("Switching to trustworthy subsystem");
+                    let t = t.ok().map(Result::unwrap);
+                    let u = u.ok().map(Result::unwrap);
+                    if let Some(switch) = strategy.switch_to(&t, &u) {
+                        warn!("Switching to `{switch:?}` subsystem");
+                        *active.write().await = switch;
                     }
 
                     match *active.read().await {
                         ActiveSubsystem::Trustworthy => {
                             match t {
-                                Ok(t) => yield t.unwrap(),
-                                Err(_) => {
+                                Some(t) => yield t,
+                                None => {
                                     panic!("The trustworthy controller timed out");
                                 }
                             }
                         }
                         ActiveSubsystem::Unreliable => {
                             match u {
-                                Ok(u) => yield u.unwrap(),
-                                Err(_) => {
+                                Some(u) => yield u,
+                                None => {
                                     match t {
-                                        Ok(t) => yield t.unwrap(),
-                                        Err(_) => {
+                                        Some(t) => yield t,
+                                        None => {
                                             panic!("The trustworthy controller timed out");
                                         }
                                     }
