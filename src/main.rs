@@ -2,9 +2,9 @@ mod decision_logic;
 mod decision_strategy;
 mod subsystem;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
-use crate::decision_strategy::{AlwaysTrustworthy, AlwaysUnreliable};
+use crate::decision_strategy::{AlwaysTrustworthy, AlwaysUnreliable, ManualSwitch, TryUnreliable};
 use decision_logic::{ActiveSubsystem, DecisionLogic};
 use decision_strategy::DecisionStrategy;
 use figment::{
@@ -16,7 +16,7 @@ use miette::IntoDiagnostic;
 use rasta::{rasta_client::RastaClient, SciPacket};
 use sci_rs::SCITelegram;
 use serde::{Deserialize, Deserializer};
-use tokio::sync::{broadcast::Sender, RwLock};
+use tokio::sync::broadcast::Sender;
 use tonic::{Request, Streaming};
 use tracing::info;
 
@@ -45,13 +45,11 @@ pub async fn next_message(messages: &mut Streaming<SciPacket>) -> miette::Result
 }
 
 pub struct AxleCounter<S: DecisionStrategy + 'static> {
-    tds_id: String,
-    ixl_id: String,
     rasta_id: String,
     ixl_address: String,
     decision_logic: DecisionLogic<S>,
     sender: Sender<SCITelegram>,
-    active: Arc<RwLock<ActiveSubsystem>>,
+    ixl_delay: Duration,
 }
 
 impl<S: DecisionStrategy> AxleCounter<S> {
@@ -63,22 +61,19 @@ impl<S: DecisionStrategy> AxleCounter<S> {
             strategy,
         );
         let sender = decision_logic.get_sender();
-        let active = decision_logic.active();
         Self {
-            tds_id: config.tds_id,
-            ixl_id: config.ixl_id,
             rasta_id: config.rasta_id,
             ixl_address: config.ixl_address,
             decision_logic,
             sender,
-            active,
+            ixl_delay: config.ixl_delay,
         }
     }
 
     pub async fn run(self) -> miette::Result<()> {
         let stream = self.decision_logic.run().await;
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(self.ixl_delay).await;
 
         let mut client = RastaClient::connect(self.ixl_address)
             .await
@@ -97,28 +92,34 @@ impl<S: DecisionStrategy> AxleCounter<S> {
             }
         }
 
-        info!("Closing Object Controller");
+        info!("Closing Object Controller (IXL disconnected)");
         Ok(())
     }
 }
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct Config {
-    tds_id: String,
-    ixl_id: String,
     ixl_address: String,
     rasta_id: String,
     #[serde(deserialize_with = "deserialize_timer_value")]
+    ixl_delay: Duration,
+    #[serde(deserialize_with = "deserialize_timer_value")]
     timeout: Duration,
-
+    strategy: SelectedStrategy,
     trustworthy: SubsystemConfig,
     unreliable: SubsystemConfig,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub enum SelectedStrategy {
+    AlwaysTrustworthy,
+    AlwaysUnreliable,
+    ManualSwitch,
+    TryUnreliable,
+}
+
 #[derive(Deserialize, Clone, Debug)]
 pub struct SubsystemConfig {
-    tds_id: String,
-    ixl_id: String,
     ixl_address: SocketAddr,
 }
 
@@ -145,9 +146,24 @@ async fn main() -> miette::Result<()> {
         .into_diagnostic()?;
     info!("{:?}", &config);
 
-    //let axle_counter = AxleCounter::from_config(config, AlwaysTrustworthy);
-    let axle_counter = AxleCounter::from_config(config, AlwaysUnreliable);
-    axle_counter.run().await?;
+    match config.strategy {
+        SelectedStrategy::AlwaysTrustworthy => {
+            let axle_counter = AxleCounter::from_config(config, AlwaysTrustworthy);
+            axle_counter.run().await?;
+        }
+        SelectedStrategy::AlwaysUnreliable => {
+            let axle_counter = AxleCounter::from_config(config, AlwaysUnreliable);
+            axle_counter.run().await?;
+        }
+        SelectedStrategy::ManualSwitch => {
+            let axle_counter = AxleCounter::from_config(config, ManualSwitch::new());
+            axle_counter.run().await?;
+        }
+        SelectedStrategy::TryUnreliable => {
+            let axle_counter = AxleCounter::from_config(config, TryUnreliable);
+            axle_counter.run().await?;
+        }
+    }
 
     Ok(())
 }

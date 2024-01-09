@@ -13,7 +13,7 @@ use crate::{
     SubsystemConfig,
 };
 use std::{sync::Arc, time::Duration};
-use tracing::{info, warn};
+use tracing::{error, info};
 
 #[derive(Copy, Clone, Debug)]
 pub enum ActiveSubsystem {
@@ -98,18 +98,17 @@ impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
                     }
 
                     if let Some(switch) = strategy.switch_to(&t, &u) {
-                        warn!("Switching to `{switch:?}` subsystem");
+                        error!("Decision Module requires switch to {switch:?} subsystem.");
                         *active.write().await = switch;
+                        std::process::exit(0);
                     }
-
-                    //info!("{} {}", if let Some(t) = &t {t.to_string()} else {"None".to_string()}, if let Some(t) = &u {t.to_string()} else {"None".to_string()});
 
                     match *active.read().await {
                         ActiveSubsystem::Trustworthy => {
                             match t {
                                 Some(t) => yield t,
                                 None => {
-                                    panic!("The trustworthy controller timed out (trustworthy was active)");
+                                    panic!("The trustworthy controller timed out");
                                 }
                             }
                         }
@@ -117,12 +116,7 @@ impl<S: DecisionStrategy + 'static> DecisionLogic<S> {
                             match u {
                                 Some(u) => yield u,
                                 None => {
-                                    match t {
-                                        Some(t) => yield t,
-                                        None => {
-                                            panic!("The trustworthy controller timed out (unreliable was active)");
-                                        }
-                                    }
+                                    panic!("The unreliable controller timed out");
                                 }
                             }
                         }
